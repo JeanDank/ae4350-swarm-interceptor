@@ -1,0 +1,15 @@
+numpy>=2.0.0
+gymnasium>=1.0.0
+pettingzoo>=1.24.0
+stable-baselines3>=2.3.0
+sb3-contrib>=2.3.0
+pybullet>=3.2.6
+tensorboard>=2.14.0
+matplotlib>=3.7.0
+torch>=2.0.0
+ray[rllib,tune]>=2.6.0
+scipy>=1.10.0
+transforms3d>=0.4.0
+control>=0.9.0
+# Not on this list: gym-pybullet-drones. Clone it into the project root and install editable:
+#   git clone https://github.com/utiasDSL/gym-pybullet-drones.git && pip install -e gym-pybullet-drones
