@@ -72,10 +72,13 @@ class SwarmInterceptEnv(ParallelEnv):
 
     # ------------------------------------------------------------------
     def observation_space(self, agent: str) -> Box:
-        return Box(low=-np.inf, high=np.inf, shape=(20,), dtype=np.float32)
+        return Box(low=-np.inf, high=np.inf, shape=(23,), dtype=np.float32)
 
     def action_space(self, agent: str) -> Box:
-        return Box(low=0.0, high=1.0, shape=(7,), dtype=np.float32)
+        # Six rule weights in [0,1] + a SIGNED orbit weight in [-1,1]: the policy
+        # picks each drone's orbit direction, so dispersal can emerge.
+        low = np.array([0, 0, 0, 0, 0, 0, -1], dtype=np.float32)
+        return Box(low=low, high=np.ones(7, dtype=np.float32), dtype=np.float32)
 
     # ------------------------------------------------------------------
     def _spawn_swarm(self):
@@ -320,18 +323,28 @@ class SwarmInterceptEnv(ParallelEnv):
                     rewards[agent_name] += config.APPROACH_BONUS * (
                         closing_speed / (config.MAX_VEL_CMD + config.FPV_SPEED))
 
-            # Idle-formation shaping (patrol band + teammate spacing): paid only
+            # Idle-formation shaping (patrol band + angular coverage): paid only
             # while this drone has NO fresh FPV track, so positioning incentives
-            # never compete with an active engagement.
+            # never compete with an active engagement. Coverage rewards the GOAL
+            # (no approach direction left undefended) rather than a mechanism,
+            # so ring formations / scout splits can emerge instead of being scripted.
             if not self.fpv_active or self.fpv_seen_age[i] > config.FPV_MEMORY_STEPS:
                 dist_t = np.linalg.norm(self.positions[i] - self.target_pos)
                 if abs(dist_t - config.PATROL_RADIUS) < config.PATROL_WIDTH:
                     rewards[agent_name] += config.PATROL_BONUS
-                d_nn = min((np.linalg.norm(self.positions[i] - self.positions[j])
-                            for j in active_at_start if j != i),
-                           default=config.SPACING_CAP)
-                rewards[agent_name] += config.SPACING_BONUS * (
-                    min(d_nn, config.SPACING_CAP) / config.SPACING_CAP)
+                rel_i = self.positions[i] - self.target_pos
+                th_i = np.arctan2(rel_i[1], rel_i[0])
+                ang_seps = []
+                for j in active_at_start:
+                    if j == i:
+                        continue
+                    rel_j = self.positions[j] - self.target_pos
+                    th_j = np.arctan2(rel_j[1], rel_j[0])
+                    ang_seps.append(abs((th_i - th_j + np.pi) % (2 * np.pi) - np.pi))
+                if ang_seps:
+                    rewards[agent_name] += config.SPREAD_BONUS * (
+                        min(min(ang_seps), config.SPREAD_ANGLE_CAP)
+                        / config.SPREAD_ANGLE_CAP)
 
             # Target breach
             if self.fpv_active and np.linalg.norm(self.fpv_pos - self.target_pos) < config.BLAST_RADIUS:
@@ -422,12 +435,16 @@ class SwarmInterceptEnv(ParallelEnv):
                 rel_nearest = np.zeros(3, dtype=np.float32)
                 n_frac = 0.0
 
-            # 20D observation:
+            # 23D observation:
             # [own_vel (3), rel_fpv_pos (3), rel_fpv_vel (3), rel_target (3),
             #  freshness (1), rel_neighbor_com (3), rel_nearest_neighbor (3),
-            #  neighbor_fraction (1)]
+            #  neighbor_fraction (1), own_heading (3)]
+            # own_heading = camera forward: without it the policy can't relate
+            # neighbours/threats to its FOV, nor make left/right (orbit sign)
+            # decisions — both needed for scanning and dispersal to emerge.
             obs = np.concatenate([vel_i, rel_fpv_pos, rel_fpv_vel, rel_target_pos,
-                                  [freshness], rel_com, rel_nearest, [n_frac]])
+                                  [freshness], rel_com, rel_nearest, [n_frac],
+                                  self.headings[i]])
             obs_dict[f"drone_{i}"] = obs.astype(np.float32)
 
         return obs_dict

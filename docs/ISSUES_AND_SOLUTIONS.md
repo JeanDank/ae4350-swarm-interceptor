@@ -107,7 +107,42 @@ A chronological log of the problems hit while building the swarm-interceptor
 - Note: these changes made all earlier checkpoints (incl. `final_model`) incompatible —
   retrain from scratch.
 
-## 5. Ray / RLlib / PettingZoo quirks
+## 5. Emergence rework (2026-06-12)
+
+A 6-episode diagnostic of the retrained model (72 drone-lives) showed the §4 reward fixes
+were necessary but not sufficient: every drone still died every episode (mostly ground),
+every episode was breached, and only 4/12 waves were intercepted. The patrol band *did*
+hold (82% of drone-time inside it) — but as one tight clump (median neighbour distance
+1.5 m), not a ring.
+
+**Drones still crashed into the ground — but from cruise altitude, not high dives.**
+- *Cause:* no longer reward-driven (death costs −400). The Boids output was normalized to
+  full speed (`normalize(combined) * MAX_VEL_CMD`), so a drone chasing a low FPV dove at
+  2 m/s and built momentum the ground reflex could not reverse within 2.5 m.
+- *Fix:* (1) variable speed — **cap** the combined magnitude instead of normalizing
+  (`speed = MAX_VEL_CMD · min(‖combined‖, 1)`), so drones can slow down, hover, park, and
+  block; (2) a **descent brake** above the reflex zone: commanded sink rate is limited to
+  `(z − GROUND_SAFE_Z)/GROUND_BRAKE_TIME`, making dive-throughs impossible from any height.
+
+**Swarm held the shell as a single clump; no dispersal, no emergent formation.**
+- *Cause:* full-speed normalization made differential speeds (needed for a clump to
+  stretch) impossible, and the orbit rule was hardcoded counterclockwise, so even heavy
+  orbiting (w_orbit ≈ 0.74) moved the clump as one body.
+- *Fix (emergence over scripting):*
+  - **Signed orbit weight**: action component 7 is now in [−1, 1] — each drone *chooses*
+    its orbit direction from its own observations, instead of a hardcoded split.
+  - **Own heading added to the obs** (23D): without the camera-forward vector the policy
+    cannot relate neighbours/threats to its FOV or make left/right decisions — both
+    prerequisites for scanning and dispersal to emerge.
+  - **Angular-coverage shaping replaces metric spacing**: the idle bonus now pays for
+    bearing separation around the target (saturating at the perfect-ring share 2π/N).
+    This rewards the *goal* — no approach direction left undefended — while leaving the
+    mechanism (ring, sectors, scout splits) free to emerge.
+  - Idle shaping raised 0.02 → 0.05/step so the formation gradient is visible to PPO.
+- Curriculum lengthened to 80/80/160 iterations (phase 3 — the narrow-FOV setting that
+  actually ships — gets the most time).
+
+## 6. Ray / RLlib / PettingZoo quirks
 
 - Ray 2.55 needs the **old API stack** for PettingZoo Dict obs spaces:
   `enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False`.

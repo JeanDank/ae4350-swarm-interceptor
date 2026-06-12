@@ -1,3 +1,5 @@
+import math
+
 # --- Swarm & FPV Dynamics ---
 NUM_DRONES = 12
 # CF2X can only HOLD ALTITUDE up to ~2.5 m/s; commanding faster makes it tilt
@@ -41,6 +43,7 @@ SWARM_SPAWN_MIN_SPACING = 2.0  # > Boids SEPARATION_RADIUS: no repulsion burst a
 # --- Ground-avoidance reflex (applied to swarm desired velocity) ---
 GROUND_SAFE_Z = 2.5        # Below this altitude the climb-first reflex kicks in
 GROUND_CLIMB_SPEED = 2.5   # Vertical climb is tilt-free, so it may exceed MAX_VEL_CMD
+GROUND_BRAKE_TIME = 1.0    # Above the zone, sink rate is limited to (z - GROUND_SAFE_Z)/this
 
 # --- Detection / Sensing ---
 DETECTION_RANGE = 20.0     # Scaled to the smaller arena
@@ -78,11 +81,14 @@ SCOUT_BONUS = 50.0
 SURVIVOR_REWARD = 100.0    # Episode end, ONLY if the target was never breached
 
 # --- Patrol / formation shaping (paid only while a drone has NO fresh FPV track) ---
+# Shaping rewards the OUTCOME (omnidirectional coverage of the asset), not a
+# mechanism: angular separation around the target says "no direction is left
+# uncovered" without prescribing orbits, roles, or positions.
 PATROL_RADIUS = 10.0       # Guardian rule's equilibrium shell around the target
 PATROL_WIDTH = 4.0         # Band softness (tanh scale of the guardian + bonus half-width)
-PATROL_BONUS = 0.02        # Per-step bonus for holding the patrol band
-SPACING_BONUS = 0.02       # Per-step bonus for distance to the nearest teammate
-SPACING_CAP = 6.0          # Spacing bonus saturates here (no reward for scattering further)
+PATROL_BONUS = 0.05        # Per-step bonus for holding the patrol band
+SPREAD_BONUS = 0.05        # Per-step bonus for angular (bearing) separation around target
+SPREAD_ANGLE_CAP = 2 * math.pi / NUM_DRONES  # Saturates at the perfect-ring share
 NEIGHBOR_RADIUS = 15.0     # Teammates inside this range appear in the neighbour obs
 
 # --- Physical Properties ---

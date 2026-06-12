@@ -20,13 +20,13 @@ def env_creator(env_config):
 # then narrow toward the realistic forward camera. Jumping straight to a narrow
 # FOV risks the "blind swarm, no intercept signal" failure mode.
 # Iteration counts assume train_batch_size=16000 (4x the old 4000), so each
-# iteration sees ~1333 env steps (~1.5 episodes) of 12-agent data; the totals
-# below are ~1.6x the experience of the old 150/150/200 schedule.
+# iteration sees ~1333 env steps (~1.5 episodes) of 12-agent data. Phase 3 gets
+# the most time: the narrow FOV is the hardest setting and the one that ships.
 CURRICULUM = [
     # (fov_degrees, iterations)
-    (360.0, 60),
-    (180.0, 60),
-    (120.0, 80),
+    (360.0, 80),
+    (180.0, 80),
+    (120.0, 160),
 ]
 
 

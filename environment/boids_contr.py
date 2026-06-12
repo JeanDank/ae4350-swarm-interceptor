@@ -34,6 +34,8 @@ def compute_boids_velocity(positions, velocities, headings, fpv_pos, fpv_vel, ta
         target_pos: (3,) array of target position
         actions: (N, 7) array of RL weights
                  [w_pred, w_react, w_pres, w_coh, w_sep, w_guard, w_orbit]
+                 First six are in [0, 1]; w_orbit is SIGNED in [-1, 1] so each
+                 drone picks its own orbit direction (lets dispersal emerge).
 
     Returns:
         desired_velocities: (N, 3) array of desired velocity vectors for each drone
@@ -95,6 +97,8 @@ def compute_boids_velocity(positions, velocities, headings, fpv_pos, fpv_vel, ta
 
         # 7. Orbit Vector: horizontal tangential sweep around the target. Since the
         # camera heading follows the velocity, orbiting doubles as scanning.
+        # w_orbit is signed: the policy chooses CW vs CCW per drone, so a clump
+        # can split and spread along the shell without hardcoded roles.
         orbit_vec = normalize(np.cross(np.array([0.0, 0.0, 1.0]), pos_i - target_pos))
 
         # Combine vectors using the RL action weights
@@ -103,8 +107,17 @@ def compute_boids_velocity(positions, velocities, headings, fpv_pos, fpv_vel, ta
         #Sum Weighted Vectors
         combined_vector = (w_pred*predictive_vec) + (w_react * reactive_vec) + (w_pres * preserve_vec) + (w_coh * cohesion_vec) + (w_sep * separation_vec) + (w_guard * guardian_vec) + (w_orbit * orbit_vec)
         
-        #Normalize the combined_vector and multiply by config.MAX_VEL_CMD
-        desired_velocities[i] = normalize(combined_vector) * config.MAX_VEL_CMD
+        # Variable speed: CAP the combined magnitude instead of normalizing it.
+        # |combined| >= 1 flies at MAX_VEL_CMD; smaller magnitudes command
+        # proportionally slower flight, down to a hover when the rules cancel.
+        # (Full-speed normalization made parking on the shell, blocking, and
+        # stretching a clump apart dynamically impossible.)
+        mag = np.linalg.norm(combined_vector)
+        if mag > 1e-8:
+            desired_velocities[i] = combined_vector * (
+                config.MAX_VEL_CMD * min(mag, 1.0) / mag)
+        else:
+            desired_velocities[i] = np.zeros(3)
 
         # Ground-avoidance reflex: never let the controller command the drone into the
         # floor. Below GROUND_SAFE_Z the reflex takes over "climb-first": horizontal
@@ -114,5 +127,11 @@ def compute_boids_velocity(positions, velocities, headings, fpv_pos, fpv_vel, ta
             deficit = min((config.GROUND_SAFE_Z - pos_i[2]) / config.GROUND_SAFE_Z, 1.0)  # 0..1
             desired_velocities[i, 0:2] *= (1.0 - deficit)            # suppress horizontal when low
             desired_velocities[i, 2] = config.GROUND_CLIMB_SPEED * deficit  # force climb
+        else:
+            # Descent brake: above the reflex zone, never command a sink rate the
+            # reflex cannot recover from. Full-speed dives from cruise altitude
+            # were punching through the reflex on momentum and killing drones.
+            min_vz = -(pos_i[2] - config.GROUND_SAFE_Z) / config.GROUND_BRAKE_TIME
+            desired_velocities[i, 2] = max(desired_velocities[i, 2], min_vz)
 
     return desired_velocities
